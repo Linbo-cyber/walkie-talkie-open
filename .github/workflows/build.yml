@@ -64,23 +64,32 @@ jobs:
             0x8000 .pio/build/esp32c6/partitions.bin \
             0x10000 .pio/build/esp32c6/firmware.bin
 
-      - name: Create 4MB variant from merged BIN
+      - name: Build valid 4MB bootloader/app images
         run: |
-          python - <<'PY'
-          from pathlib import Path
+          pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32c6 elf2image \
+            --flash_mode dio \
+            --flash_freq 80m \
+            --flash_size 4MB \
+            -o .pio/build/esp32c6/bootloader-4mb.bin \
+            .pio/build/esp32c6/bootloader.elf
 
-          src = Path('.pio/build/esp32c6/merged-8mb.bin')
-          dst = Path('.pio/build/esp32c6/merged-4mb.bin')
-          data = bytearray(src.read_bytes())
+          pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32c6 elf2image \
+            --flash_mode dio \
+            --flash_freq 80m \
+            --flash_size 4MB \
+            -o .pio/build/esp32c6/firmware-4mb.bin \
+            .pio/build/esp32c6/firmware.elf
 
-          # ESP image header byte 3 high nibble = flash size (0x2 => 4MB, 0x3 => 8MB)
-          for off in (0x0, 0x10000):
-              if len(data) > off + 4 and data[off] == 0xE9:
-                  data[off + 3] = (data[off + 3] & 0x0F) | 0x20
-
-          dst.write_bytes(data)
-          print(f'Wrote {dst} ({len(data)} bytes)')
-          PY
+      - name: Merge to single BIN (4MB header, valid digest)
+        run: |
+          pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32c6 merge_bin \
+            -o .pio/build/esp32c6/merged-4mb.bin \
+            --flash_mode dio \
+            --flash_freq 80m \
+            --flash_size 4MB \
+            0x0 .pio/build/esp32c6/bootloader-4mb.bin \
+            0x8000 .pio/build/esp32c6/partitions.bin \
+            0x10000 .pio/build/esp32c6/firmware-4mb.bin
 
       - name: Verify merged BIN headers
         run: |
