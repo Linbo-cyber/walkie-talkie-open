@@ -18,8 +18,8 @@
 #define AUDIO_CHANNELS      1
 #define AUDIO_BITS          16
 #define AUDIO_FRAME_MS      20
-#define AUDIO_FRAME_SAMPLES (AUDIO_SAMPLE_RATE * AUDIO_FRAME_MS / 1000)
-#define AUDIO_FRAME_BYTES   (AUDIO_FRAME_SAMPLES * AUDIO_CHANNELS * (AUDIO_BITS / 8))
+#define AUDIO_FRAME_SAMPLES (AUDIO_SAMPLE_RATE * AUDIO_FRAME_MS / 1000)  // 320
+#define AUDIO_FRAME_BYTES   (AUDIO_FRAME_SAMPLES * AUDIO_CHANNELS * (AUDIO_BITS / 8))  // 640
 
 typedef enum {
     AUDIO_STATE_IDLE,
@@ -32,14 +32,12 @@ esp_err_t audio_deinit(void);
 
 // Speaker
 esp_err_t audio_play_pcm(const int16_t *data, size_t samples);
-esp_err_t audio_play_opus(const uint8_t *data, size_t len);
 void audio_stop_playback(void);
 void audio_set_mute(bool mute);
 bool audio_is_muted(void);
 
 // Microphone
 esp_err_t audio_mic_read(int16_t *buf, size_t samples, size_t *bytes_read);
-int audio_mic_encode_opus(const int16_t *pcm, size_t samples, uint8_t *out, size_t out_max);
 
 // File playback buffer
 esp_err_t audio_file_feed(const uint8_t *data, size_t len);

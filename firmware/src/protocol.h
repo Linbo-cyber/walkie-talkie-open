@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
 
 // Packet types
 #define PKT_AUDIO_STREAM    0x01  // Real-time voice data

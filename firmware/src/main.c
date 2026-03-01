@@ -30,15 +30,13 @@ static socklen_t client_addr_len = 0;
 static volatile bool client_connected = false;
 static volatile bool mic_streaming = false;
 static uint16_t tx_seq = 0;
-static uint16_t rx_seq = 0;
 
 // ── WiFi SoftAP ──
 
 static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data) {
     if (base == WIFI_EVENT) {
         if (id == WIFI_EVENT_AP_STACONNECTED) {
-            wifi_event_ap_staconnected_t *e = (wifi_event_ap_staconnected_t *)data;
-            ESP_LOGI(TAG, "Client connected, MAC: " MACSTR, MAC2STR(e->mac));
+            ESP_LOGI(TAG, "Client connected");
         } else if (id == WIFI_EVENT_AP_STADISCONNECTED) {
             ESP_LOGI(TAG, "Client disconnected");
             client_connected = false;
@@ -153,11 +151,11 @@ static void handle_packet(const uint8_t *buf, size_t len, struct sockaddr_in *fr
 
     switch (hdr.type) {
         case PKT_AUDIO_STREAM:
-            // Voice from phone → play on speaker, interrupt file playback
+            // Voice from phone → play on speaker as raw PCM, interrupt file playback
             if (audio_get_state() == AUDIO_STATE_PLAYING_FILE) {
                 audio_stop_playback();
             }
-            audio_play_opus(payload, hdr.len);
+            audio_play_pcm((const int16_t *)payload, hdr.len / sizeof(int16_t));
             break;
 
         case PKT_AUDIO_FILE:
@@ -198,10 +196,8 @@ static void udp_rx_task(void *arg) {
 
 static void mic_task(void *arg) {
     int16_t pcm[AUDIO_FRAME_SAMPLES];
-    uint8_t opus_buf[256];
 
     while (1) {
-        // Always capture, only send when client connected
         size_t bytes_read = 0;
         esp_err_t err = audio_mic_read(pcm, AUDIO_FRAME_SAMPLES, &bytes_read);
         if (err != ESP_OK || bytes_read == 0) {
@@ -210,10 +206,8 @@ static void mic_task(void *arg) {
         }
 
         if (client_connected) {
-            int encoded = audio_mic_encode_opus(pcm, AUDIO_FRAME_SAMPLES, opus_buf, sizeof(opus_buf));
-            if (encoded > 0) {
-                udp_send_pkt(PKT_AUDIO_STREAM, opus_buf, encoded, 0);
-            }
+            // Send raw PCM directly
+            udp_send_pkt(PKT_AUDIO_STREAM, (const uint8_t *)pcm, bytes_read, 0);
         }
     }
 }
