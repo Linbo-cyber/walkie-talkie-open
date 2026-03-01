@@ -53,16 +53,39 @@ jobs:
       - name: Build firmware
         run: pio run
 
-      - name: Merge to single BIN
+      - name: Merge to single BIN (8MB header)
         run: |
           pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32c6 merge_bin \
-            -o .pio/build/esp32c6/merged.bin \
+            -o .pio/build/esp32c6/merged-8mb.bin \
             --flash_mode dio \
             --flash_freq 80m \
-            --flash_size 4MB \
+            --flash_size keep \
             0x0 .pio/build/esp32c6/bootloader.bin \
             0x8000 .pio/build/esp32c6/partitions.bin \
             0x10000 .pio/build/esp32c6/firmware.bin
+
+      - name: Create 4MB variant from merged BIN
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          src = Path('.pio/build/esp32c6/merged-8mb.bin')
+          dst = Path('.pio/build/esp32c6/merged-4mb.bin')
+          data = bytearray(src.read_bytes())
+
+          # ESP image header byte 3 high nibble = flash size (0x2 => 4MB, 0x3 => 8MB)
+          for off in (0x0, 0x10000):
+              if len(data) > off + 4 and data[off] == 0xE9:
+                  data[off + 3] = (data[off + 3] & 0x0F) | 0x20
+
+          dst.write_bytes(data)
+          print(f'Wrote {dst} ({len(data)} bytes)')
+          PY
+
+      - name: Verify merged BIN headers
+        run: |
+          pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32c6 image_info --version 2 .pio/build/esp32c6/merged-8mb.bin | grep -E "Flash size|Entry point"
+          pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32c6 image_info --version 2 .pio/build/esp32c6/merged-4mb.bin | grep -E "Flash size|Entry point"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -71,7 +94,8 @@ jobs:
             firmware/.pio/build/esp32c6/firmware.bin
             firmware/.pio/build/esp32c6/bootloader.bin
             firmware/.pio/build/esp32c6/partitions.bin
-            firmware/.pio/build/esp32c6/merged.bin
+            firmware/.pio/build/esp32c6/merged-8mb.bin
+            firmware/.pio/build/esp32c6/merged-4mb.bin
 
   release:
     needs: [build-apk, build-firmware]
@@ -90,11 +114,13 @@ jobs:
       - name: Rename artifacts
         run: |
           mv artifacts/apk/app-release.apk artifacts/WalkieTalkie-${{ github.ref_name }}.apk
-          mv artifacts/firmware/merged.bin artifacts/WalkieTalkie-merged-${{ github.ref_name }}.bin
+          mv artifacts/firmware/merged-8mb.bin artifacts/WalkieTalkie-merged-8MB-${{ github.ref_name }}.bin
+          mv artifacts/firmware/merged-4mb.bin artifacts/WalkieTalkie-merged-4MB-${{ github.ref_name }}.bin
 
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             artifacts/WalkieTalkie-${{ github.ref_name }}.apk
-            artifacts/WalkieTalkie-merged-${{ github.ref_name }}.bin
+            artifacts/WalkieTalkie-merged-8MB-${{ github.ref_name }}.bin
+            artifacts/WalkieTalkie-merged-4MB-${{ github.ref_name }}.bin
           generate_release_notes: true
