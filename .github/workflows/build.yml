@@ -55,7 +55,7 @@ jobs:
 
       - name: Merge to single BIN
         run: |
-          python -m esptool --chip esp32c6 merge_bin \
+          ~/.platformio/penv/bin/python -m esptool --chip esp32c6 merge_bin \
             -o .pio/build/esp32c6/merged.bin \
             --flash_mode dio \
             --flash_freq 80m \
