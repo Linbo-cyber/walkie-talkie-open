@@ -1,7 +1,7 @@
 name: walkie_talkie
 description: WalkieTalkie - ESP32-C6 audio intercom
 publish_to: 'none'
-version: 1.0.1
+version: 1.0.2
 
 environment:
   sdk: '>=3.5.0 <4.0.0'
@@ -17,8 +17,6 @@ dependencies:
   permission_handler: ^11.3.0
   opus_flutter: ^3.0.0
   audioplayers: ^6.0.0
-  network_info_plus: ^6.0.0
-  wakelock_plus: ^1.2.0
 
 dependency_overrides:
   package_info_plus: 8.0.2

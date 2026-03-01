@@ -3,10 +3,8 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:wakelock_plus/wakelock_plus.dart';
 import '../services/udp_service.dart';
 import '../services/audio_service.dart';
-import '../services/wifi_service.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -18,7 +16,6 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   final UdpService _udp = UdpService();
   final AudioService _audio = AudioService();
-  final WifiService _wifi = WifiService();
 
   bool _connected = false;
   bool _muted = false;
@@ -48,7 +45,6 @@ class _HomePageState extends State<HomePage> {
         _connected = true;
         _status = '已连接';
       });
-      WakelockPlus.enable();
     };
 
     _udp.onDisconnected = () {
@@ -56,44 +52,30 @@ class _HomePageState extends State<HomePage> {
         _connected = false;
         _status = '连接断开';
       });
-      WakelockPlus.disable();
     };
 
-    _udp.onAudioReceived = (Uint8List opusData) {
-      // TODO: decode and play on phone speaker
-      // For now ESP mic → phone is handled by the ESP sending audio
+    _udp.onAudioReceived = (Uint8List data) {
+      // TODO: phone playback if needed
     };
 
-    _udp.onStatusReceived = (int code) {
-      // Handle status updates from ESP
-    };
+    _udp.onStatusReceived = (int code) {};
   }
 
   Future<void> _connectToEsp() async {
     setState(() => _status = '连接中...');
-
-    final onEspWifi = await _wifi.isConnectedToEsp();
-    if (!onEspWifi) {
-      setState(() => _status = '请先连接 WalkieTalkie WiFi');
-      return;
-    }
-
     await _udp.connect();
   }
 
-  // ── Mute toggle ──
   void _toggleMute() {
     setState(() => _muted = !_muted);
     _udp.sendCommand(_muted ? Cmd.mute : Cmd.unmute);
     _audio.setMute(_muted);
   }
 
-  // ── Push-to-talk ──
   Future<void> _startTalk() async {
     if (!_connected) return;
-    _udp.sendCommand(Cmd.startStream); // interrupts file playback on ESP
+    _udp.sendCommand(Cmd.startStream);
     _audio.onAudioCaptured = (Uint8List pcmData) {
-      // Send raw PCM; in production encode to Opus first
       _udp.sendAudioStream(pcmData);
     };
     await _audio.startRecording();
@@ -106,7 +88,6 @@ class _HomePageState extends State<HomePage> {
     setState(() => _recording = false);
   }
 
-  // ── File picker & send ──
   Future<void> _pickAndSendFile() async {
     if (!_connected) {
       _showSnack('请先连接设备');
@@ -166,7 +147,6 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _audio.dispose();
     _udp.disconnect();
-    WakelockPlus.disable();
     super.dispose();
   }
 
@@ -181,7 +161,6 @@ class _HomePageState extends State<HomePage> {
         title: const Text('WalkieTalkie'),
         centerTitle: true,
         actions: [
-          // Connection indicator
           Padding(
             padding: const EdgeInsets.only(right: 16),
             child: Icon(
@@ -193,13 +172,12 @@ class _HomePageState extends State<HomePage> {
       ),
       body: Column(
         children: [
-          // Status bar
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
             color: connected
-                ? Colors.green.withOpacity(0.1)
-                : Colors.red.withOpacity(0.1),
+                ? Colors.green.withValues(alpha: 0.1)
+                : Colors.red.withValues(alpha: 0.1),
             child: Text(
               _status,
               textAlign: TextAlign.center,
@@ -212,7 +190,6 @@ class _HomePageState extends State<HomePage> {
 
           const Spacer(),
 
-          // Recording indicator
           if (_recording)
             Column(
               children: [
@@ -238,13 +215,11 @@ class _HomePageState extends State<HomePage> {
               ],
             ),
 
-          // Main buttons
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 32),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                // Mute button
                 _ActionButton(
                   icon: _muted ? Icons.volume_off : Icons.volume_up,
                   label: _muted ? '已静音' : '声音',
@@ -252,7 +227,6 @@ class _HomePageState extends State<HomePage> {
                   onTap: _toggleMute,
                 ),
 
-                // Push-to-talk button (large, center)
                 GestureDetector(
                   onLongPressStart: (_) => _startTalk(),
                   onLongPressEnd: (_) => _stopTalk(),
@@ -269,13 +243,13 @@ class _HomePageState extends State<HomePage> {
                       boxShadow: [
                         if (_recording)
                           BoxShadow(
-                            color: Colors.red.withOpacity(0.4),
+                            color: Colors.red.withValues(alpha: 0.4),
                             blurRadius: 24,
                             spreadRadius: 4,
                           ),
                       ],
                     ),
-                    child: Icon(
+                    child: const Icon(
                       Icons.mic,
                       size: 40,
                       color: Colors.white,
@@ -283,7 +257,6 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ),
 
-                // Music / file button
                 _ActionButton(
                   icon: Icons.music_note,
                   label: '音频',
@@ -296,17 +269,15 @@ class _HomePageState extends State<HomePage> {
 
           const SizedBox(height: 16),
 
-          // Hint text
           Text(
             '长按麦克风按钮对讲',
             style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurface.withOpacity(0.5),
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
             ),
           ),
 
           const Spacer(),
 
-          // Reconnect button
           if (!connected)
             Padding(
               padding: const EdgeInsets.only(bottom: 32),
@@ -349,8 +320,8 @@ class _ActionButton extends StatelessWidget {
             height: 56,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: color.withOpacity(0.1),
-              border: Border.all(color: color.withOpacity(0.3)),
+              color: color.withValues(alpha: 0.1),
+              border: Border.all(color: color.withValues(alpha: 0.3)),
             ),
             child: Icon(icon, color: color, size: 28),
           ),
