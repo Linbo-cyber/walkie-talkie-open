@@ -53,6 +53,17 @@ jobs:
       - name: Build firmware
         run: pio run
 
+      - name: Merge to single BIN
+        run: |
+          python -m esptool --chip esp32c6 merge_bin \
+            -o .pio/build/esp32c6/merged.bin \
+            --flash_mode dio \
+            --flash_freq 80m \
+            --flash_size 2MB \
+            0x0 .pio/build/esp32c6/bootloader.bin \
+            0x8000 .pio/build/esp32c6/partitions.bin \
+            0x10000 .pio/build/esp32c6/firmware.bin
+
       - uses: actions/upload-artifact@v4
         with:
           name: firmware
@@ -60,6 +71,7 @@ jobs:
             firmware/.pio/build/esp32c6/firmware.bin
             firmware/.pio/build/esp32c6/bootloader.bin
             firmware/.pio/build/esp32c6/partitions.bin
+            firmware/.pio/build/esp32c6/merged.bin
 
   release:
     needs: [build-apk, build-firmware]
@@ -78,14 +90,18 @@ jobs:
       - name: Rename artifacts
         run: |
           mv artifacts/apk/app-release.apk artifacts/WalkieTalkie-${{ github.ref_name }}.apk
+          mv artifacts/firmware/merged.bin artifacts/WalkieTalkie-merged-${{ github.ref_name }}.bin
           cd artifacts/firmware
           for f in *.bin; do
-            mv "$f" "../../artifacts/WalkieTalkie-${f%.bin}-${{ github.ref_name }}.bin"
+            if [ "$f" != "merged.bin" ]; then
+              mv "$f" "../../artifacts/WalkieTalkie-${f%.bin}-${{ github.ref_name }}.bin"
+            fi
           done
 
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             artifacts/WalkieTalkie-${{ github.ref_name }}.apk
+            artifacts/WalkieTalkie-merged-${{ github.ref_name }}.bin
             artifacts/WalkieTalkie-*-${{ github.ref_name }}.bin
           generate_release_notes: true
