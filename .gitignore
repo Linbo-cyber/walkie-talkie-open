@@ -1,0 +1,16 @@
+node_modules/
+.pio/
+.vscode/
+build/
+*.o
+*.a
+*.so
+app/.dart_tool/
+app/.packages
+app/build/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/android/.gradle/
+app/android/local.properties
+app/ios/Pods/
+.DS_Store

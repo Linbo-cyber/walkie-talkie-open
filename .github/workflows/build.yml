@@ -1,0 +1,91 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.27.0'
+          channel: stable
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: app/build/app/outputs/flutter-apk/app-release.apk
+
+  build-firmware:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: firmware
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+          key: pio-${{ hashFiles('firmware/platformio.ini') }}
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build firmware
+        run: pio run
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: |
+            firmware/.pio/build/esp32c6/firmware.bin
+            firmware/.pio/build/esp32c6/bootloader.bin
+            firmware/.pio/build/esp32c6/partitions.bin
+
+  release:
+    needs: [build-apk, build-firmware]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: apk
+          path: artifacts/apk
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware
+          path: artifacts/firmware
+
+      - name: Rename artifacts
+        run: |
+          mv artifacts/apk/app-release.apk artifacts/WalkieTalkie-${{ github.ref_name }}.apk
+          cd artifacts/firmware
+          for f in *.bin; do
+            mv "$f" "../../artifacts/WalkieTalkie-${f%.bin}-${{ github.ref_name }}.bin"
+          done
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/WalkieTalkie-${{ github.ref_name }}.apk
+            artifacts/WalkieTalkie-*-${{ github.ref_name }}.bin
+          generate_release_notes: true
