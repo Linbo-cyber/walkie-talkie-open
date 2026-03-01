@@ -91,17 +91,10 @@ jobs:
         run: |
           mv artifacts/apk/app-release.apk artifacts/WalkieTalkie-${{ github.ref_name }}.apk
           mv artifacts/firmware/merged.bin artifacts/WalkieTalkie-merged-${{ github.ref_name }}.bin
-          cd artifacts/firmware
-          for f in *.bin; do
-            if [ "$f" != "merged.bin" ]; then
-              mv "$f" "../../artifacts/WalkieTalkie-${f%.bin}-${{ github.ref_name }}.bin"
-            fi
-          done
 
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             artifacts/WalkieTalkie-${{ github.ref_name }}.apk
             artifacts/WalkieTalkie-merged-${{ github.ref_name }}.bin
-            artifacts/WalkieTalkie-*-${{ github.ref_name }}.bin
           generate_release_notes: true
