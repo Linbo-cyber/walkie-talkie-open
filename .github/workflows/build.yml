@@ -29,7 +29,7 @@ jobs:
             patch=$((patch + 1))
             new_tag="v${major}.${minor}.${patch}"
           fi
-          echo "Latest tag: ${latest:-none} → New tag: $new_tag"
+          echo "Latest tag: ${latest:-none} -> New tag: $new_tag"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag $new_tag
@@ -76,7 +76,8 @@ jobs:
 
       - uses: actions/cache@v4
         with:
-          path: ~/.platformio
+          path: |
+            ~/.platformio
           key: pio-${{ hashFiles('firmware/platformio.ini') }}
 
       - name: Install PlatformIO
@@ -85,21 +86,58 @@ jobs:
       - name: Build firmware
         run: pio run
 
-      - name: Merge to single BIN
+      - name: Merge to single BIN (8MB header)
         run: |
           pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32c6 merge_bin \
-            -o .pio/build/esp32c6/merged.bin \
+            -o .pio/build/esp32c6/merged-8mb.bin \
             --flash_mode dio \
             --flash_freq 80m \
-            --flash_size 4MB \
+            --flash_size keep \
             0x0 .pio/build/esp32c6/bootloader.bin \
             0x8000 .pio/build/esp32c6/partitions.bin \
             0x10000 .pio/build/esp32c6/firmware.bin
 
+      - name: Build valid 4MB bootloader/app images
+        run: |
+          pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32c6 elf2image \
+            --flash_mode dio \
+            --flash_freq 80m \
+            --flash_size 4MB \
+            -o .pio/build/esp32c6/bootloader-4mb.bin \
+            .pio/build/esp32c6/bootloader.elf
+
+          pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32c6 elf2image \
+            --flash_mode dio \
+            --flash_freq 80m \
+            --flash_size 4MB \
+            -o .pio/build/esp32c6/firmware-4mb.bin \
+            .pio/build/esp32c6/firmware.elf
+
+      - name: Merge to single BIN (4MB header, valid digest)
+        run: |
+          pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32c6 merge_bin \
+            -o .pio/build/esp32c6/merged-4mb.bin \
+            --flash_mode dio \
+            --flash_freq 80m \
+            --flash_size 4MB \
+            0x0 .pio/build/esp32c6/bootloader-4mb.bin \
+            0x8000 .pio/build/esp32c6/partitions.bin \
+            0x10000 .pio/build/esp32c6/firmware-4mb.bin
+
+      - name: Verify merged BIN headers
+        run: |
+          pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32c6 image_info --version 2 .pio/build/esp32c6/merged-8mb.bin | grep -E "Flash size|Entry point"
+          pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32c6 image_info --version 2 .pio/build/esp32c6/merged-4mb.bin | grep -E "Flash size|Entry point"
+
       - uses: actions/upload-artifact@v4
         with:
           name: firmware
-          path: firmware/.pio/build/esp32c6/merged.bin
+          path: |
+            firmware/.pio/build/esp32c6/firmware.bin
+            firmware/.pio/build/esp32c6/bootloader.bin
+            firmware/.pio/build/esp32c6/partitions.bin
+            firmware/.pio/build/esp32c6/merged-8mb.bin
+            firmware/.pio/build/esp32c6/merged-4mb.bin
 
   release:
     needs: [auto-tag, build-apk, build-firmware]
@@ -119,12 +157,14 @@ jobs:
         run: |
           TAG=${{ needs.auto-tag.outputs.new_tag }}
           mv artifacts/apk/app-release.apk artifacts/WalkieTalkie-${TAG}.apk
-          mv artifacts/firmware/merged.bin artifacts/WalkieTalkie-merged-${TAG}.bin
+          mv artifacts/firmware/merged-8mb.bin artifacts/WalkieTalkie-merged-8MB-${TAG}.bin
+          mv artifacts/firmware/merged-4mb.bin artifacts/WalkieTalkie-merged-4MB-${TAG}.bin
 
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.auto-tag.outputs.new_tag }}
           files: |
             artifacts/WalkieTalkie-${{ needs.auto-tag.outputs.new_tag }}.apk
-            artifacts/WalkieTalkie-merged-${{ needs.auto-tag.outputs.new_tag }}.bin
+            artifacts/WalkieTalkie-merged-8MB-${{ needs.auto-tag.outputs.new_tag }}.bin
+            artifacts/WalkieTalkie-merged-4MB-${{ needs.auto-tag.outputs.new_tag }}.bin
           generate_release_notes: true
