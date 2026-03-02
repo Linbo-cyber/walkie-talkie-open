@@ -1,10 +1,11 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:network_info_plus/network_info_plus.dart';
+import 'package:wifi_iot/wifi_iot.dart';
 
 class WifiService {
   static const String espSsid = 'WalkieTalkie';
+  static const String espPassword = 'walkie1234';
   static const String espGateway = '192.168.4.1';
 
   final NetworkInfo _networkInfo = NetworkInfo();
@@ -18,20 +19,22 @@ class WifiService {
     }
   }
 
-  Future<bool> canReachEsp() async {
+  /// 自动连接到 ESP32 WiFi，返回是否成功
+  Future<bool> autoConnect() async {
+    if (await isConnectedToEsp()) return true;
+
     try {
-      final socket = await Socket.connect(espGateway, 8888,
-          timeout: const Duration(seconds: 2));
-      socket.destroy();
-      return true;
-    } catch (_) {
-      // UDP doesn't need TCP connect, just check gateway ping
-      try {
-        final result = await InternetAddress(espGateway).reverse();
-        return true;
-      } catch (_) {
-        return true; // Assume reachable if on right network
-      }
+      final result = await WiFiForIoTPlugin.connect(
+        espSsid,
+        password: espPassword,
+        security: NetworkSecurity.WPA,
+        joinOnce: false,
+        withInternet: false,
+      );
+      return result;
+    } catch (e) {
+      debugPrint('WiFi auto-connect error: $e');
+      return false;
     }
   }
 }
