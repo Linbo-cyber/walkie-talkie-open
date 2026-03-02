@@ -23,12 +23,19 @@ class _HomePageState extends State<HomePage> {
   bool _muted = false;
   bool _recording = false;
   bool _sendingFile = false;
+  bool _disposed = false;      // 防止 dispose 后再 setState
+  bool _connecting = false;    // 防重入
   String _status = '未连接';
 
   @override
   void initState() {
     super.initState();
-    _requestPermissions();
+    _init();
+  }
+
+  Future<void> _init() async {
+    // 先等权限申请完，再连接
+    await _requestPermissions();
     _setupUdp();
     _connectToEsp();
   }
@@ -43,6 +50,7 @@ class _HomePageState extends State<HomePage> {
 
   void _setupUdp() {
     _udp.onConnected = () {
+      if (_disposed) return;
       setState(() {
         _connected = true;
         _status = '已连接';
@@ -50,28 +58,45 @@ class _HomePageState extends State<HomePage> {
     };
 
     _udp.onDisconnected = () {
+      if (_disposed) return;
       setState(() {
         _connected = false;
-        _status = '连接断开';
+        _status = '连接断开，重连中...';
+      });
+      // 断线后延迟重连，避免立刻重试
+      Future.delayed(const Duration(seconds: 2), () {
+        if (!_disposed) _connectToEsp();
       });
     };
 
-    _udp.onAudioReceived = (Uint8List data) {
-      // TODO: phone playback if needed
-    };
-
+    _udp.onAudioReceived = (Uint8List data) {};
     _udp.onStatusReceived = (int code) {};
   }
 
   Future<void> _connectToEsp() async {
-    setState(() => _status = '正在连接WiFi...');
-    final wifiOk = await _wifi.autoConnect();
-    if (!wifiOk) {
-      setState(() => _status = 'WiFi连接失败，请手动连接WalkieTalkie');
-      return;
+    if (_disposed) return;
+    if (_connecting) return; // 防重入
+    _connecting = true;
+
+    try {
+      final alreadyOnEsp = await _wifi.isConnectedToEsp();
+      if (_disposed) return;
+
+      if (!alreadyOnEsp) {
+        if (!_disposed) setState(() => _status = '正在连接WiFi...');
+        final wifiOk = await _wifi.autoConnect();
+        if (_disposed) return;
+        if (!wifiOk) {
+          setState(() => _status = 'WiFi连接失败，请手动连接WalkieTalkie');
+          return;
+        }
+      }
+
+      if (!_disposed) setState(() => _status = '连接设备中...');
+      await _udp.connect();
+    } finally {
+      _connecting = false;
     }
-    setState(() => _status = '连接设备中...');
-    await _udp.connect();
   }
 
   void _toggleMute() {
@@ -87,13 +112,13 @@ class _HomePageState extends State<HomePage> {
       _udp.sendAudioStream(pcmData);
     };
     await _audio.startRecording();
-    setState(() => _recording = true);
+    if (!_disposed) setState(() => _recording = true);
   }
 
   Future<void> _stopTalk() async {
     await _audio.stopRecording();
     _udp.sendCommand(Cmd.stopStream);
-    setState(() => _recording = false);
+    if (!_disposed) setState(() => _recording = false);
   }
 
   Future<void> _pickAndSendFile() async {
@@ -125,7 +150,7 @@ class _HomePageState extends State<HomePage> {
     final path = result.files.single.path;
     if (path == null) return;
 
-    setState(() {
+    if (!_disposed) setState(() {
       _sendingFile = true;
       _status = '发送音频中...';
     });
@@ -138,7 +163,7 @@ class _HomePageState extends State<HomePage> {
     } catch (e) {
       _showSnack('发送失败: $e');
     } finally {
-      setState(() {
+      if (!_disposed) setState(() {
         _sendingFile = false;
         _status = '已连接';
       });
@@ -146,6 +171,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _showSnack(String msg) {
+    if (_disposed) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg), duration: const Duration(seconds: 2)),
     );
@@ -153,6 +179,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    _disposed = true;
     _audio.dispose();
     _udp.disconnect();
     super.dispose();
@@ -290,7 +317,7 @@ class _HomePageState extends State<HomePage> {
             Padding(
               padding: const EdgeInsets.only(bottom: 32),
               child: ElevatedButton.icon(
-                onPressed: _connectToEsp,
+                onPressed: _connecting ? null : _connectToEsp,
                 icon: const Icon(Icons.refresh),
                 label: const Text('重新连接'),
               ),
