@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../services/udp_service.dart';
 import '../services/audio_service.dart';
+import '../services/wifi_service.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -16,6 +17,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   final UdpService _udp = UdpService();
   final AudioService _audio = AudioService();
+  final WifiService _wifi = WifiService();
 
   bool _connected = false;
   bool _muted = false;
@@ -62,7 +64,13 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _connectToEsp() async {
-    setState(() => _status = '连接中...');
+    setState(() => _status = '正在连接WiFi...');
+    final wifiOk = await _wifi.autoConnect();
+    if (!wifiOk) {
+      setState(() => _status = 'WiFi连接失败，请手动连接WalkieTalkie');
+      return;
+    }
+    setState(() => _status = '连接设备中...');
     await _udp.connect();
   }
 
