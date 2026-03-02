@@ -103,16 +103,33 @@ class UdpService {
     // Send initial ping to register with ESP
     sendCommand(Cmd.ping);
 
-    // Periodic ping for keepalive
-    _pingTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+    // Periodic ping: fast retry until connected, then keepalive
+    _pingTimer = Timer.periodic(const Duration(milliseconds: 800), (_) {
       sendCommand(Cmd.ping);
-      // Check timeout
-      if (_lastPong != null &&
+
+      // Check timeout only after connected
+      if (_connected &&
+          _lastPong != null &&
           DateTime.now().difference(_lastPong!).inSeconds > 10) {
-        if (_connected) {
-          _connected = false;
-          onDisconnected?.call();
-        }
+        _connected = false;
+        onDisconnected?.call();
+      }
+
+      // Slow down ping once connected
+      if (_connected) {
+        _pingTimer?.cancel();
+        _pingTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+          sendCommand(Cmd.ping);
+          if (_lastPong != null &&
+              DateTime.now().difference(_lastPong!).inSeconds > 10) {
+            if (_connected) {
+              _connected = false;
+              onDisconnected?.call();
+              // Start fast retry again
+              connect();
+            }
+          }
+        });
       }
     });
   }
