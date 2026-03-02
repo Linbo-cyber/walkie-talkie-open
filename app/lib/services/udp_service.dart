@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
+import 'package:network_info_plus/network_info_plus.dart';
 
-/// Packet types matching firmware protocol.h
 class PktType {
   static const int audioStream = 0x01;
   static const int audioFile = 0x02;
@@ -52,10 +52,10 @@ class PacketHeader {
   Uint8List encode() {
     final buf = ByteData(headerSize);
     buf.setUint8(0, type);
-    buf.setUint16(1, seq, Endian.little);
+    buf.setUint16(1, seq & 0xFFFF, Endian.little);
     buf.setUint16(3, len, Endian.little);
     buf.setUint8(5, flags);
-    buf.setUint16(6, 0, Endian.little); // reserved
+    buf.setUint16(6, 0, Endian.little);
     return buf.buffer.asUint8List();
   }
 
@@ -71,7 +71,7 @@ class PacketHeader {
   }
 }
 
-typedef AudioCallback = void Function(Uint8List opusData);
+typedef AudioCallback = void Function(Uint8List data);
 typedef StatusCallback = void Function(int statusCode);
 
 class UdpService {
@@ -84,50 +84,70 @@ class UdpService {
   Timer? _pingTimer;
   DateTime? _lastPong;
   bool _connected = false;
+  bool _disposed = false;
+  final NetworkInfo _networkInfo = NetworkInfo();
 
   bool get isConnected => _connected;
 
   Future<void> connect() async {
-    _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
-    _socket!.broadcastEnabled = true;
+    if (_disposed) return;
+    _cleanup();
 
+    // 绑定到 WiFi 网关对应的本机地址，强制走 WiFi 网卡
+    // 避免华为等设备自动切回移动数据
+    String? bindIp;
+    try {
+      final ip = await _networkInfo.getWifiIP();
+      if (ip != null && ip.isNotEmpty) bindIp = ip;
+    } catch (_) {}
+
+    final bindAddr = bindIp != null
+        ? InternetAddress(bindIp)
+        : InternetAddress.anyIPv4;
+
+    try {
+      _socket = await RawDatagramSocket.bind(bindAddr, 0);
+    } catch (_) {
+      // 绑定指定 IP 失败就退回 anyIPv4
+      _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+    }
+
+    _socket!.broadcastEnabled = true;
     _socket!.listen((event) {
       if (event == RawSocketEvent.read) {
-        final dg = _socket!.receive();
-        if (dg != null) {
-          _handleDatagram(dg.data);
-        }
+        final dg = _socket?.receive();
+        if (dg != null) _handleDatagram(dg.data);
       }
-    });
-
-    // Send initial ping to register with ESP
-    sendCommand(Cmd.ping);
-
-    // Periodic ping: fast retry until connected, then keepalive
-    _pingTimer = Timer.periodic(const Duration(milliseconds: 800), (_) {
-      sendCommand(Cmd.ping);
-
-      // Check timeout only after connected
-      if (_connected &&
-          _lastPong != null &&
-          DateTime.now().difference(_lastPong!).inSeconds > 10) {
+    }, onError: (_) {
+      if (_connected && !_disposed) {
         _connected = false;
         onDisconnected?.call();
       }
+    });
 
-      // Slow down ping once connected
+    sendCommand(Cmd.ping);
+
+    // 未连接时 800ms 快速 ping，连上后换 3s keepalive
+    _pingTimer = Timer.periodic(const Duration(milliseconds: 800), (_) {
+      if (_disposed) return;
+      sendCommand(Cmd.ping);
+
+      if (_connected && _lastPong != null &&
+          DateTime.now().difference(_lastPong!).inSeconds > 10) {
+        _connected = false;
+        onDisconnected?.call();
+        return;
+      }
+
       if (_connected) {
         _pingTimer?.cancel();
         _pingTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+          if (_disposed) return;
           sendCommand(Cmd.ping);
-          if (_lastPong != null &&
+          if (_connected && _lastPong != null &&
               DateTime.now().difference(_lastPong!).inSeconds > 10) {
-            if (_connected) {
-              _connected = false;
-              onDisconnected?.call();
-              // Start fast retry again
-              connect();
-            }
+            _connected = false;
+            onDisconnected?.call();
           }
         });
       }
@@ -135,6 +155,7 @@ class UdpService {
   }
 
   void _handleDatagram(Uint8List data) {
+    if (_disposed) return;
     final hdr = PacketHeader.decode(data);
     if (hdr == null) return;
 
@@ -145,9 +166,7 @@ class UdpService {
         onAudioReceived?.call(payload);
         break;
       case PktType.status:
-        if (payload.isNotEmpty) {
-          onStatusReceived?.call(payload[0]);
-        }
+        if (payload.isNotEmpty) onStatusReceived?.call(payload[0]);
         break;
       case PktType.cmd:
         if (payload.isNotEmpty && payload[0] == Cmd.pong) {
@@ -162,7 +181,7 @@ class UdpService {
   }
 
   void _send(int type, Uint8List payload, {int flags = 0}) {
-    if (_socket == null) return;
+    if (_socket == null || _disposed) return;
     final hdr = PacketHeader(
       type: type,
       seq: _seq++,
@@ -172,40 +191,44 @@ class UdpService {
     final packet = Uint8List(headerSize + payload.length);
     packet.setAll(0, hdr.encode());
     packet.setAll(headerSize, payload);
-    _socket!.send(packet, InternetAddress(espIp), udpPort);
+    try {
+      _socket!.send(packet, InternetAddress(espIp), udpPort);
+    } catch (e) {
+      debugPrint('UDP send error: $e');
+    }
   }
 
-  void sendAudioStream(Uint8List opusData) {
-    _send(PktType.audioStream, opusData);
-  }
+  void sendAudioStream(Uint8List data) => _send(PktType.audioStream, data);
+  void sendCommand(int cmd) => _send(PktType.cmd, Uint8List.fromList([cmd]));
 
-  void sendCommand(int cmd) {
-    _send(PktType.cmd, Uint8List.fromList([cmd]));
-  }
-
-  /// Send audio file in chunks
   Future<void> sendAudioFile(Uint8List fileData) async {
+    if (!_connected || _disposed) return;
     sendCommand(Cmd.fileStart);
     await Future.delayed(const Duration(milliseconds: 50));
-
     int offset = 0;
     while (offset < fileData.length) {
+      if (!_connected || _disposed) break;
       final end = (offset + maxPayloadSize).clamp(0, fileData.length);
-      final chunk = fileData.sublist(offset, end);
-      _send(PktType.audioFile, chunk);
+      _send(PktType.audioFile, fileData.sublist(offset, end));
       offset = end;
-      // Throttle to avoid overwhelming ESP buffer
       await Future.delayed(const Duration(milliseconds: 5));
     }
-
-    _send(PktType.audioFileEnd, Uint8List(0));
+    if (_connected && !_disposed) {
+      _send(PktType.audioFileEnd, Uint8List(0));
+    }
   }
 
-  void disconnect() {
+  void _cleanup() {
     _pingTimer?.cancel();
     _pingTimer = null;
     _socket?.close();
     _socket = null;
     _connected = false;
+    _lastPong = null;
+  }
+
+  void disconnect() {
+    _disposed = true;
+    _cleanup();
   }
 }
