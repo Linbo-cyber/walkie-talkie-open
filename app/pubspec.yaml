@@ -17,6 +17,7 @@ dependencies:
   permission_handler: ^11.3.0
   opus_flutter: ^3.0.0
   audioplayers: ^6.0.0
+  wifi_iot: ^0.3.19
 
 dependency_overrides:
   package_info_plus: 8.0.2
