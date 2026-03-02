@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:typed_data';
-import 'package:flutter/foundation.dart';
 import 'package:record/record.dart';
 
 class AudioService {
@@ -8,21 +7,22 @@ class AudioService {
   StreamSubscription? _recorderSub;
   bool _isRecording = false;
   bool _isMuted = false;
+  bool _disposed = false;
 
   bool get isRecording => _isRecording;
   bool get isMuted => _isMuted;
 
-  /// Callback for encoded audio chunks from mic
   void Function(Uint8List pcmData)? onAudioCaptured;
 
   Future<bool> checkPermission() async {
+    if (_disposed) return false;
     return await _recorder.hasPermission();
   }
 
   Future<void> startRecording() async {
-    if (_isRecording) return;
+    if (_disposed || _isRecording) return;
     final hasPermission = await _recorder.hasPermission();
-    if (!hasPermission) return;
+    if (!hasPermission || _disposed) return;
 
     final stream = await _recorder.startStream(
       const RecordConfig(
@@ -34,7 +34,7 @@ class AudioService {
     );
 
     _recorderSub = stream.listen((data) {
-      if (!_isMuted) {
+      if (!_isMuted && !_disposed) {
         onAudioCaptured?.call(data);
       }
     });
@@ -55,6 +55,7 @@ class AudioService {
   }
 
   Future<void> dispose() async {
+    _disposed = true;
     await stopRecording();
     _recorder.dispose();
   }
