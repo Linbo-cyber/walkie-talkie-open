@@ -74,8 +74,8 @@ static void wifi_init_softap(void) {
     ESP_ERROR_CHECK(esp_wifi_start());
     esp_wifi_set_max_tx_power(80); // 20dBm
 
-    // Force 802.11b for better range
-    esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11B);
+    // Enable 11b/g/n for better speed (11b only = 1Mbps max)
+    esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
 
     ESP_LOGI(TAG, "SoftAP started: SSID=%s PASS=%s CH=%d", WIFI_SSID, WIFI_PASS, WIFI_CHANNEL);
 }
